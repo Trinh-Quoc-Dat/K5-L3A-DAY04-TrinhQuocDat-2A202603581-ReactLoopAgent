@@ -11,6 +11,9 @@ from providers import Provider
 from scenarios import ScenarioTools
 from grading import grade_case, summarize, bonus_points
 from bonus.tools import BonusTools
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def run_case(case, args):
@@ -33,7 +36,7 @@ def run_case(case, args):
 
 def main():
     parser = argparse.ArgumentParser(description='Chạy agent và chấm eval 0–100')
-    choices = ['openai', 'gemini', 'anthropic', 'openrouter']
+    choices = ['openai', 'gemini', 'anthropic', 'openrouter', 'groq']
     parser.add_argument('--provider', choices=choices, default=os.getenv('PROVIDER', 'openai'))
     parser.add_argument('--model', default=os.getenv('MODEL'))
     parser.add_argument('--judge-provider', choices=choices, default=os.getenv('JUDGE_PROVIDER'))

@@ -1,5 +1,12 @@
+# Environment
 .env
 .venv/
 __pycache__/
 *.pyc
+
+# Evaluation outputs
 eval_results*.json
+eval_test_*.json
+
+# IDE
+.vscode/

@@ -3,27 +3,121 @@ import json
 import os
 import urllib.error
 import urllib.request
+import time
+import re
 
 CONFIG = {
     'openai': ('OPENAI_API_KEY', 'https://api.openai.com/v1/chat/completions'),
     'gemini': ('GEMINI_API_KEY', 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'),
     'openrouter': ('OPENROUTER_API_KEY', 'https://openrouter.ai/api/v1/chat/completions'),
     'anthropic': ('ANTHROPIC_API_KEY', 'https://api.anthropic.com/v1/messages'),
+    'groq': ('GROQ_API_KEY', 'https://api.groq.com/openai/v1/chat/completions'),
 }
 
 
+
 def post_json(url, headers, payload):
-    req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json', **headers})
-    try:
-        with urllib.request.urlopen(req, timeout=60) as response:
-            return json.load(response)
-    except urllib.error.HTTPError as exc:
-        # Do not print response bodies: they may contain account or request data.
-        raise RuntimeError(f'Provider trả HTTP {exc.code}; kiểm tra model, key và quota.') from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f'Không kết nối được provider: {exc.reason}') from exc
+    max_attempts = 4
 
+    def parse_duration(value):
+        if not value:
+            return 0
 
+        value = str(value).strip()
+
+        try:
+            return float(value)
+        except ValueError:
+            pass
+
+        match = re.fullmatch(
+            r'(?:(\d+(?:\.\d+)?)h)?'
+            r'(?:(\d+(?:\.\d+)?)m)?'
+            r'(?:(\d+(?:\.\d+)?)s)?',
+            value
+        )
+
+        if not match:
+            return 0
+
+        hours, minutes, seconds = match.groups()
+
+        return (
+            float(hours or 0) * 3600
+            + float(minutes or 0) * 60
+            + float(seconds or 0)
+        )
+
+    for attempt in range(max_attempts):
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode('utf-8'),
+            headers={
+                **headers,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'User-Agent': 'ReactLoopAgent/1.0',
+            },
+            method='POST'
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                return json.load(response)
+
+        except urllib.error.HTTPError as exc:
+            response_headers = exc.headers or {}
+
+            header_names = [
+                'retry-after',
+                'x-ratelimit-limit-requests',
+                'x-ratelimit-remaining-requests',
+                'x-ratelimit-reset-requests',
+                'x-ratelimit-limit-tokens',
+                'x-ratelimit-remaining-tokens',
+                'x-ratelimit-reset-tokens',
+            ]
+
+            details = []
+            for name in header_names:
+                value = response_headers.get(name)
+                if value is not None:
+                    details.append(f'{name}: {value!r}')
+
+            diagnostic = '; '.join(details) or 'Không có rate-limit headers'
+
+            if exc.code == 429 and attempt < max_attempts - 1:
+                retry_after = parse_duration(
+                    response_headers.get('retry-after')
+                )
+                reset_tokens = parse_duration(
+                    response_headers.get('x-ratelimit-reset-tokens')
+                )
+
+                wait_seconds = max(
+                    retry_after,
+                    reset_tokens,
+                    2 ** (attempt + 1)
+                ) + 1
+
+                print(
+                    f'HTTP 429: Chờ {wait_seconds:.1f} giây '
+                    f'rồi thử lại ({attempt + 1}/{max_attempts - 1})...'
+                )
+
+                exc.close()
+                time.sleep(wait_seconds)
+                continue
+
+            raise RuntimeError(
+                f'Provider trả HTTP {exc.code}; {diagnostic}'
+            ) from exc
+
+        except urllib.error.URLError as exc:
+            raise RuntimeError(
+                f'Không kết nối được provider: {exc.reason}'
+            ) from exc
+        
 class Provider:
     """complete(messages, schemas) -> {message, calls, finish, usage}.
 
